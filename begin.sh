@@ -1,26 +1,5 @@
 #!/bin/bash
 
-# Check if calamares_polkit is installed
-if ! command -v calamares_polkit; then
-    echo "please run this on an arch live session"
-    exit
-fi
-
-# Modify the Calamares configuration to include the shellprocess module
-sudo sed -i 's/postcfg/postcfg\n        - shellprocess/g' /etc/calamares/settings.conf
-
-# Create the shellprocess configuration file
-echo '---
-operations:
-    - install:
-        source: "/path/to/your/script.sh"
-        destination: "/destination/path/on/the/target/system"
-' | sudo tee /etc/calamares/modules/shellprocess.conf
-
-# Your existing script starts here...
-
-clear
-echo -ne "
 ------------------------------------------------------------------
 Yes, I definitely know what I'm doing maybe possibly I think! LMAO
 ------------------------------------------------------------------
