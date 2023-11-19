@@ -1,145 +1,83 @@
 #!/bin/bash
 
-------------------------------------------------------------------
+-------------------------------------------------------------------
 Yes, I definitely know what I'm doing maybe possibly I think! LMAO
-------------------------------------------------------------------
+-------------------------------------------------------------------
 
 
-# Setting
-loadkeys us
-timedatectl set-ntp true
-
-# Drive selection
-clear
-lsblk
-echo -ne "Drive to install to: "
-read -r drive
-cfdisk "$drive"
-
-# Partition slection
-clear
-lsblk "$drive"
-
-echo -ne "Enter EFI partition: "
-read -r efipartition
-
-read -r -p "Should we format the EFI partition? [y/n]: " answer
-if [[ $answer = y ]]; then
-    echo "There it goes then"
-    mkfs.fat -F 32 "$efipartition"
-else
-    echo "Alright, skipping EFI partition formatting"
+# Check if script is run as root
+if [ "$(id -u)" != "0" ]; then
+   echo "This script must be run as root" 1>&2
+   exit 1
 fi
 
-echo -ne "Enter swap partition: "
-read -r swappartition
-mkswap "$swappartition"
+# Check if whiptail is available
+if ! command -v whiptail >/dev/null; then
+    echo "whiptail is not installed. Install it and run this script again."
+    exit 1
+fi
 
-echo -ne "Enter root/home partition: "
-read -r rootpartition
-mkfs.ext4 "$rootpartition"
+# Use whiptail to get user input
+USERNAME=$(whiptail --inputbox "Enter your username" 8 78 --title "User Input" 3>&1 1>&2 2>&3)
+PASSWORD=$(whiptail --passwordbox "Enter your password" 8 78 --title "User Input" 3>&1 1>&2 2>&3)
 
-# Mounting filesystems
-mount "$rootpartition" /mnt
-mkdir -p /mnt/boot
-mount "$efipartition" /mnt/boot
-swapon "$swappartition"
+# Create a 500MB EFI partition and a root partition with the rest of the space
+echo -e "g\nn\n\n\n+500M\nt\n1\nn\n\n\n\nw" | fdisk /dev/nvme0n1
 
-# Initial Install
+# Install base system and generate fstab
 pacstrap /mnt base base-devel linux linux-firmware
 genfstab -U /mnt > /mnt/etc/fstab
 
-# Moving the rest of the script to the install and chrooting
-sed '1,/^###part2$/d' install.sh > /mnt/install2.sh
-chmod +x /mnt/install2.sh
-arch-chroot /mnt ./install2.sh
-exit
-
-
-
-###part2
-
-
-
-#!/bin/bash
-
-# Setting things so things are faster
+# Install necessary packages
 pacman -S --noconfirm sed git xdg-user-dirs
 xdg-user-dirs-update
 echo
-print_success " All necessary packages installed successfully."
+echo "All necessary packages installed successfully."
 
+# Install yay and paru from AUR
 git clone https://aur.archlinux.org/yay
 cd yay
 makepkg -si
+cd ..
 
 git clone https://aur.archlinux.org/paru
 cd paru
 makepkg -si
+cd ..
 
-makej=$(nproc)
-makel=$(expr "$(nproc)" + 1)
-sed -i "s/^#MAKEFLAGS=\"-j2\"$/MAKEFLAGS=\"-j$makej -l$makel\"/" /etc/makepkg.conf
+# Install additional packages
+yay -S --noconfirm nnn mpd playerctl mpc ncmpcpp lolcat nodejs feh bat exa rclone rsync maim mpv fzf gzip p7zip
 
-# Setting timezone stuff
-ln -sf /usr/share/zoneinfo/US/Mountain /etc/localtime
-hwclock --systohc
+# Start the installation
+archinstall \
+    --script <<EOF
+{
+    "!root-password": "$PASSWORD",
+    "!hostname": "archlinux",
+    "!users": {
+        "$USERNAME": {
+            "!password": "$PASSWORD"
+        }
+    },
+    "!harddrives": ["/dev/nvme0n1"],
+    "!bootloader": "grub-install",
+    "!file-ystem": "ext4",
+    "!kernels": ["linux"],
+    "!partitions": {
+        "/dev/nvme0n1p1": {
+            "FileSystem": "fat32",
+            "MountPoint": "/boot"
+        },
+        "/dev/nvme0n1p2": {
+            "FileSystem": "ext4",
+            "MountPoint": "/"
+        }
+    }
+}
+EOF
 
-# Setting language stuff
-echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
-locale-gen
-echo "LANG=en_US.UTF-8" > /etc/locale.conf
-echo "KEYMAP=us" > /etc/vconsole.conf
-
-# Setting hostname
-clear
-echo -ne "Enter your desired hostname (Name your computer): "
-read -r hostname
-echo "$hostname" > /etc/hostname
-
-echo "127.0.0.1      localhost" >> /etc/hosts
-echo "::1            localhost" >> /etc/hosts
-echo "127.0.1.1      $hostname.localdomain $hostname" >> /etc/hosts
-
-# First making of initcpio
-mkinitcpio -P
-
-# Installing systemd-boot 
-bootctl install
-
-# Systemd-boot pacman hook
-mkdir -p /etc/pacman.d/hooks
-
-echo "[Trigger]" >> /etc/pacman.d/hooks/100-systemd-boot.hook
-echo "Type = Package" >> /etc/pacman.d/hooks/100-systemd-boot.hook
-echo "Operation = Upgrade" >> /etc/pacman.d/hooks/100-systemd-boot.hook
-echo "Target = systemd" >> /etc/pacman.d/hooks/100-systemd-boot.hook
-echo "" >> /etc/pacman.d/hooks/100-systemd-boot.hook
-echo "[Action]" >> /etc/pacman.d/hooks/100-systemd-boot.hook
-echo "Description = Gracefully upgrading systemd-boot..." >> /etc/pacman.d/hooks/100-systemd-boot.hook
-echo "When = PostTransaction" >> /etc/pacman.d/hooks/100-systemd-boot.hook
-echo "Exec = /usr/bin/systemctl restart systemd-boot-update.service" >> /etc/pacman.d/hooks/100-systemd-boot.hook
-
-# Setting loader and entry files for systemd-boot
-mkdir -p /boot/loader/entries
-
-echo "timeout 0" >> /boot/loader/loader.conf
-echo "default arch" >> /boot/loader/loader.conf
-echo "editor 0" >> /boot/loader/loader.conf
-
-clear
-lsblk
-echo -ne "Enter root partition: "
-read -r rootpart
-
-echo "title Arch Linux" >> /boot/loader/entries/arch.conf
-echo "linux /vmlinuz-linux" >> /boot/loader/entries/arch.conf
-echo "initrd /initramfs-linux.img" >> /boot/loader/entries/arch.conf
-echo "options root=$(blkid | grep $rootpart | awk '{print $2}' | sed 's/"//g') loglevel=3 audit=0 quiet rw" >> /boot/loader/entries/arch.conf
-
-# Installing things i forgot in later scripts
-pacman -S nnn mpd playerctl mpc ncmpcpp  \
-          lolcat   nodejs 
-           feh  bat exa 
-          rclone rsync maim  noto-fonts noto-fonts-emoji 
-          ttf-joypixels ttf-font-awesome  mpv   fzf gzip p7zip
+# Prepare for the next script
+sed '1,/^$/d' inst.sh > /mnt/inst.sh
+chmod +x /mnt/inst.sh
+arch-chroot /mnt ./inst.sh
+exit
