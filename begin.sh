@@ -1,8 +1,8 @@
 #!/bin/bash
 
--------------------------------------------------------------------
-Yes, I definitely know what I'm doing maybe possibly I think! LMAO
--------------------------------------------------------------------
+--------------------------------------------------------------------
+You, probally should not use, this my first build and is massive!!!
+--------------------------------------------------------------------
 
 
 # Check if script is run as root
